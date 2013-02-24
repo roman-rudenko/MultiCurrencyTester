@@ -1,0 +1,36 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 11.00
+# Visual Studio 2010
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SmartDev.MultiCurrencyTester.Connect", "SmartDev.MultiCurrencyTester.Connect\SmartDev.MultiCurrencyTester.Connect.csproj", "{77306A95-5062-4EE4-A77F-5F22CEC63B54}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SmartDev.MultiCurrencyTester.Connect.Tests", "SmartDev.MultiCurrencyTester.Connect.Tests\SmartDev.MultiCurrencyTester.Connect.Tests.csproj", "{F1634DCF-3E7B-4E06-93FB-5325925BE167}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Debug|x86 = Debug|x86
+		Release|Any CPU = Release|Any CPU
+		Release|x86 = Release|x86
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{77306A95-5062-4EE4-A77F-5F22CEC63B54}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{77306A95-5062-4EE4-A77F-5F22CEC63B54}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{77306A95-5062-4EE4-A77F-5F22CEC63B54}.Debug|x86.ActiveCfg = Debug|x86
+		{77306A95-5062-4EE4-A77F-5F22CEC63B54}.Debug|x86.Build.0 = Debug|x86
+		{77306A95-5062-4EE4-A77F-5F22CEC63B54}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{77306A95-5062-4EE4-A77F-5F22CEC63B54}.Release|Any CPU.Build.0 = Release|Any CPU
+		{77306A95-5062-4EE4-A77F-5F22CEC63B54}.Release|x86.ActiveCfg = Release|x86
+		{77306A95-5062-4EE4-A77F-5F22CEC63B54}.Release|x86.Build.0 = Release|x86
+		{F1634DCF-3E7B-4E06-93FB-5325925BE167}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F1634DCF-3E7B-4E06-93FB-5325925BE167}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F1634DCF-3E7B-4E06-93FB-5325925BE167}.Debug|x86.ActiveCfg = Debug|x86
+		{F1634DCF-3E7B-4E06-93FB-5325925BE167}.Debug|x86.Build.0 = Debug|x86
+		{F1634DCF-3E7B-4E06-93FB-5325925BE167}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F1634DCF-3E7B-4E06-93FB-5325925BE167}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F1634DCF-3E7B-4E06-93FB-5325925BE167}.Release|x86.ActiveCfg = Release|x86
+		{F1634DCF-3E7B-4E06-93FB-5325925BE167}.Release|x86.Build.0 = Release|x86
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+EndGlobal
