@@ -37,12 +37,12 @@ namespace SmartDev.MultiCurrencyTester.Connect.Tests
 		private void WaitForStartInitialization(ConnectImpl conn)
 		{
 			int i = Timeout;
-			while (conn.GetInstanceStatus() == InstanceStatus.NotInitialized && i > 0)
+			while (conn.InstanceStatus == InstanceStatus.NotInitialized && i > 0)
 			{
 				Thread.Sleep(100);
 				i -= 100;
 			}
-			Assert.That(conn.GetInstanceStatus(), Is.Not.EqualTo(InstanceStatus.NotInitialized));
+			Assert.That(conn.InstanceStatus, Is.Not.EqualTo(InstanceStatus.NotInitialized));
 		}
 
 		private void WaitForStatusWaiting(ConnectImpl conn)
@@ -59,12 +59,12 @@ namespace SmartDev.MultiCurrencyTester.Connect.Tests
 		private void WaitForStatus(ConnectImpl conn, InstanceStatus staus)
 		{
 			int i = Timeout;
-			while (conn.GetInstanceStatus() != staus && i > 0)
+			while (conn.InstanceStatus != staus && i > 0)
 			{
 				Thread.Sleep(100);
 				i -= 100;
 			}
-			Assert.That(conn.GetInstanceStatus(), Is.EqualTo(staus));
+			Assert.That(conn.InstanceStatus, Is.EqualTo(staus));
 		}
 
 		#endregion
@@ -129,13 +129,13 @@ namespace SmartDev.MultiCurrencyTester.Connect.Tests
 				using (RunAsync(() => conn2.InitializeTestAPI(2, instancesCount)))
 				{
 					WaitForStatusWaiting(conn0);
-					Assert.That(conn0.GetInstanceStatus(), Is.Not.EqualTo(InstanceStatus.Initialized));
+					Assert.That(conn0.InstanceStatus, Is.Not.EqualTo(InstanceStatus.Initialized));
 
 					WaitForStatusWaiting(conn1);
-					Assert.That(conn1.GetInstanceStatus(), Is.Not.EqualTo(InstanceStatus.Initialized));
+					Assert.That(conn1.InstanceStatus, Is.Not.EqualTo(InstanceStatus.Initialized));
 
 					WaitForStatusWaiting(conn2);
-					Assert.That(conn2.GetInstanceStatus(), Is.Not.EqualTo(InstanceStatus.Initialized));
+					Assert.That(conn2.InstanceStatus, Is.Not.EqualTo(InstanceStatus.Initialized));
 
 					using (RunAsync(() => conn3.InitializeTestAPI(3, instancesCount)))
 					{
@@ -143,10 +143,10 @@ namespace SmartDev.MultiCurrencyTester.Connect.Tests
 						Assert.That(conn3.IsInstanceWaiting, Is.False);
 					}
 				}
-				Assert.That(conn0.GetInstanceStatus(), Is.EqualTo(InstanceStatus.Initialized));
-				Assert.That(conn1.GetInstanceStatus(), Is.EqualTo(InstanceStatus.Initialized));
-				Assert.That(conn2.GetInstanceStatus(), Is.EqualTo(InstanceStatus.Initialized));
-				Assert.That(conn3.GetInstanceStatus(), Is.EqualTo(InstanceStatus.Initialized));
+				Assert.That(conn0.InstanceStatus, Is.EqualTo(InstanceStatus.Initialized));
+				Assert.That(conn1.InstanceStatus, Is.EqualTo(InstanceStatus.Initialized));
+				Assert.That(conn2.InstanceStatus, Is.EqualTo(InstanceStatus.Initialized));
+				Assert.That(conn3.InstanceStatus, Is.EqualTo(InstanceStatus.Initialized));
 			}
 		}
 
@@ -174,13 +174,13 @@ namespace SmartDev.MultiCurrencyTester.Connect.Tests
 				using (RunAsync(() => conn2.InitializeTestAPI(2, instancesCount)))
 				{
 					WaitForStatusWaiting(conn0);
-					Assert.That(conn0.GetInstanceStatus(), Is.Not.EqualTo(InstanceStatus.Initialized));
+					Assert.That(conn0.InstanceStatus, Is.Not.EqualTo(InstanceStatus.Initialized));
 
 					WaitForStatusWaiting(conn1);
-					Assert.That(conn1.GetInstanceStatus(), Is.Not.EqualTo(InstanceStatus.Initialized));
+					Assert.That(conn1.InstanceStatus, Is.Not.EqualTo(InstanceStatus.Initialized));
 
 					WaitForStatusWaiting(conn2);
-					Assert.That(conn2.GetInstanceStatus(), Is.Not.EqualTo(InstanceStatus.Initialized));
+					Assert.That(conn2.InstanceStatus, Is.Not.EqualTo(InstanceStatus.Initialized));
 
 					using (RunAsync(() =>
 						{
@@ -192,10 +192,10 @@ namespace SmartDev.MultiCurrencyTester.Connect.Tests
 						Assert.That(conn3.IsInstanceWaiting, Is.False);
 					}
 				}
-				Assert.That(conn0.GetInstanceStatus(), Is.EqualTo(InstanceStatus.Initialized));
-				Assert.That(conn1.GetInstanceStatus(), Is.EqualTo(InstanceStatus.Initialized));
-				Assert.That(conn2.GetInstanceStatus(), Is.EqualTo(InstanceStatus.Initialized));
-				Assert.That(conn3.GetInstanceStatus(), Is.EqualTo(InstanceStatus.Deinitialized));
+				Assert.That(conn0.InstanceStatus, Is.EqualTo(InstanceStatus.Initialized));
+				Assert.That(conn1.InstanceStatus, Is.EqualTo(InstanceStatus.Initialized));
+				Assert.That(conn2.InstanceStatus, Is.EqualTo(InstanceStatus.Initialized));
+				Assert.That(conn3.InstanceStatus, Is.EqualTo(InstanceStatus.Deinitialized));
 			}
 		}
 
@@ -206,9 +206,9 @@ namespace SmartDev.MultiCurrencyTester.Connect.Tests
 			{
 				conn.InitializeTestAPI(0, 1);
 				conn.NextTick(100);
-				Assert.That(conn.GetLastInstanceTick(), Is.EqualTo(100));
+				Assert.That(conn.InstanceTime, Is.EqualTo(100));
 				conn.NextTick(101);
-				Assert.That(conn.GetLastInstanceTick(), Is.EqualTo(101));
+				Assert.That(conn.InstanceTime, Is.EqualTo(101));
 			}
 		}
 
@@ -478,10 +478,10 @@ namespace SmartDev.MultiCurrencyTester.Connect.Tests
 		[Test, Ignore]
 		public void StressTest()
 		{
-			Timeout = 100000;
+			Timeout = 10000000;
 
 			const int instancesCount = 10;
-			const int cycleCount = 100;
+			const int cycleCount = 10;
 			var rnd = new Random();
 
 			using (var conn0 = new ConnectImpl())

@@ -4,9 +4,10 @@ namespace SmartDev.MultiCurrencyTester.Connect
 {
 	public enum InstanceStatus
 	{
-		NotInitialized = 0,
-		Initialized = 1,
-		Deinitialized = 2
+		Unknown = 0,
+		NotInitialized = 1,
+		Initialized = 2,
+		Deinitialized = 3
 	}
 
 	public enum VariableOperations
@@ -27,15 +28,12 @@ namespace SmartDev.MultiCurrencyTester.Connect
 	{
 		public MemoryContract()
 		{
-			InstancesStatuses = new Dictionary<int, InstanceStatus>();
-			InstancesTime = new Dictionary<int, int>();
+			//InstancesTime = new Dictionary<int, int>();
 			Variables = new List<VariableConract>();
 			VariableOperations = new Dictionary<string, VariableOperations>();
 		}
 
-		public int InstancesCount { get; set; }
-		public Dictionary<int, InstanceStatus> InstancesStatuses { get; set; }	// <InstanceId, InstanceStatus>
-		public Dictionary<int, int> InstancesTime { get; set; }					// <InstanceId, Tick>
+		//public Dictionary<int, int> InstancesTime { get; set; }					// <InstanceId, Tick>
 		public List<VariableConract> Variables { get; set; }
 		public Dictionary<string, VariableOperations> VariableOperations { get; set; } // <VariableName, VariableOperations>
 	}

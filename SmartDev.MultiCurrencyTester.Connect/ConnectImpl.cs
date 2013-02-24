@@ -21,6 +21,14 @@ namespace SmartDev.MultiCurrencyTester.Connect
 		private const int IntOffset = sizeof(int);
 		private const int DoubleOffset = sizeof(double);
 		private const int ByteOffset = sizeof(byte);
+
+		private const int ReadersCountOffset = 0;
+		private const int WritersCountOffset = ReadersCountOffset + IntOffset;
+		private const int InstancesCountOffset = WritersCountOffset + IntOffset;
+		private const int InstancesStatusesOffset = InstancesCountOffset + IntOffset;
+		private int InstancesTimesOffset = -1;
+		private int MemoryContractOffset = -1;
+
 		private const long MemoryMappedFileSize = 0xA00000; // 10 megabytes
 		private const string MemoryMappedFileName = "SmartDev.MultiCurrencyTester.MemoryMappedFile";
 		private const string OnDataUpdatedEventName = "SmartDev.MultiCurrencyTester.OnDataUpdatedEvent";
@@ -35,6 +43,9 @@ namespace SmartDev.MultiCurrencyTester.Connect
 		private EventWaitHandle _onReaderLockEvent;
 		private Mutex _onWriteLockMutex;
 		private int _instanceId = -1;
+		private int _instancesCount = -1;
+		private InstanceStatus _instanceStatus = InstanceStatus.Unknown;
+		private int _instanceTime = -1;
 
 		public ConnectImpl()
 		{
@@ -42,9 +53,7 @@ namespace SmartDev.MultiCurrencyTester.Connect
 			_onReaderLockEvent = new EventWaitHandle(true, EventResetMode.ManualReset, OnReaderLockEventName);
 			_onWriteLockMutex = new Mutex(false, OnWriteLockMutexName);
 
-			bool isNeedInitializeMemoryMappedFile = false;
-
-			using (var lockObj = GetInitLock())
+			using (GetInitLock())
 			{
 				try
 				{
@@ -53,18 +62,11 @@ namespace SmartDev.MultiCurrencyTester.Connect
 				catch (FileNotFoundException)
 				{
 					_memoryMappedFile = MemoryMappedFile.CreateNew(MemoryMappedFileName, MemoryMappedFileSize);
-					isNeedInitializeMemoryMappedFile = true;
 				}
 
 				_memoryMappedViewAccessor = _memoryMappedFile.CreateViewAccessor();
 				_memoryMappedViewStream = _memoryMappedFile.CreateViewStream();
 				_memoryMappedViewHandle = _memoryMappedViewStream.SafeMemoryMappedViewHandle.DangerousGetHandle();
-
-				if (isNeedInitializeMemoryMappedFile)
-				{
-					_memoryMappedViewAccessor.Write(0, 0);
-					SaveData(lockObj, new MemoryContract());
-				}
 			}
 		}
 
@@ -123,32 +125,33 @@ namespace SmartDev.MultiCurrencyTester.Connect
 			if (instanceId >= instancesCount) throw new ArgumentException("instanceId");
 
 			_instanceId = instanceId;
+			_instancesCount = instancesCount;
 
 			bool isInitialized = false;
 
-			using (var lockObj = GetReadLock())
+			int cachedInstancesCount = ReadInt32(InstancesCountOffset);
+			if (cachedInstancesCount == 0)
 			{
+				Write(InstancesCountOffset, _instancesCount);
+			}
+			else if (cachedInstancesCount != _instancesCount)
+			{
+				throw new ArgumentException("instancesCount");
+			}
+
+			InstancesTimesOffset = InstancesStatusesOffset + _instancesCount * IntOffset;
+			MemoryContractOffset = InstancesTimesOffset + _instancesCount * IntOffset;
+
 #if _LOGGING
 				Log(string.Format("conn{0}.InitializeTestAPI({1}, {2});\r\n", _instanceId, instanceId, instancesCount));
 #endif
-				var contract = LoadData();
-				if (contract.InstancesCount == 0)
-				{
-					contract.InstancesCount = instancesCount;
-				}
-				else if (contract.InstancesCount != instancesCount)
-				{
-					throw new ArgumentException("instancesCount");
-				}
-
-				contract.InstancesStatuses[_instanceId] = InstanceStatus.NotInitialized;
-				isInitialized = contract.InstancesStatuses.Count == contract.InstancesCount;
-				if (isInitialized)
-				{
-					contract.InstancesStatuses[_instanceId] = InstanceStatus.Initialized;
-				}
-				SaveData(lockObj, contract);
+			InstanceStatus = InstanceStatus.NotInitialized;
+			isInitialized = GetKnownInstancesCount() == _instancesCount;
+			if (isInitialized)
+			{
+				InstanceStatus = InstanceStatus.Initialized;
 			}
+			OnDataChanged();
 
 			while (!isInitialized)
 			{
@@ -156,11 +159,13 @@ namespace SmartDev.MultiCurrencyTester.Connect
 				using (var lockObj = GetReadLock())
 				{
 					var contract = LoadData();
-					isInitialized = contract.InstancesStatuses.Count == contract.InstancesCount;
+					isInitialized = GetKnownInstancesCount() == _instancesCount;
 					if (isInitialized)
 					{
-						contract.InstancesStatuses[_instanceId] = InstanceStatus.Initialized;
-						SaveData(lockObj, contract);
+						lockObj.GetWriteLock();
+						contract = LoadData();
+						InstanceStatus = InstanceStatus.Initialized;
+						SaveData(contract);
 						IsInstanceWaiting = false;
 						return;
 					}
@@ -172,39 +177,35 @@ namespace SmartDev.MultiCurrencyTester.Connect
 		public void DeinitializeTestAPI()
 		{
 			if (_instanceId < 0) throw new InvalidOperationException();
-			using (var lockObj = GetReadLock())
-			{
 #if _LOGGING
-				Log(string.Format("conn{0}.DeinitializeTestAPI();\r\n", _instanceId));
+			Log(string.Format("conn{0}.DeinitializeTestAPI();\r\n", _instanceId));
 #endif
-				var contract = LoadData();
-				contract.InstancesStatuses[_instanceId] = InstanceStatus.Deinitialized;
-				SaveData(lockObj, contract);
-			}
+			InstanceStatus = InstanceStatus.Deinitialized;
+			OnDataChanged();
 		}
 
 		public void DeclareVariable(string variableName, VariableOperations variableOperation)
 		{
-			using (var lockObj = GetReadLock())
+			using (var lockObj = GetWriteLock())
 			{
 #if _LOGGING
 				Log(string.Format("conn{0}.DeclareVariable(\"{1}\", VariableOperations.{2});\r\n", _instanceId, variableName, variableOperation));
 #endif
 				var contract = LoadData();
 				contract.VariableOperations[variableName] = variableOperation;
-				SaveData(lockObj, contract);
+				SaveData(contract);
 			}
 		}
 
 		public void NextTick(int tick)
 		{
-			using (var lockObj = GetReadLock())
+			InstanceTime = tick;
+			using (var lockObj = GetWriteLock())
 			{
 #if _LOGGING
 				Log(string.Format("conn{0}.NextTick({1});\r\n", _instanceId, tick));
 #endif
 				var contract = LoadData();
-				contract.InstancesTime[_instanceId] = tick;
 				int lastTickOfSlowestInstance = GetLastTickOfSlowestInstance(contract);
 				foreach (var variableName in contract.Variables.Select(v => v.Name).Distinct().ToArray())
 				{
@@ -213,7 +214,8 @@ namespace SmartDev.MultiCurrencyTester.Connect
 													  && v.Tick < lastTickOfSlowestInstance
 													  && v.Tick < lastVariableTickOfSlowestInstance);
 				}
-				SaveData(lockObj, contract);
+				lockObj.GetWriteLock();
+				SaveData(contract);
 			}
 		}
 
@@ -236,12 +238,11 @@ namespace SmartDev.MultiCurrencyTester.Connect
 					}
 #endif
 					var contract = LoadData();
-					int lastInstanceTick = GetLastInstanceTick(contract);
 					int lastTickOfSlowestInstance = GetLastTickOfSlowestInstance(contract);
 					int lastVariableTick = GetLastVariableTick(contract, variableName);
-					bool isDeinitialized = GetInstanceStatus(contract) == InstanceStatus.Deinitialized;
-					shouldWait = lastVariableTick < lastInstanceTick
-								 && lastTickOfSlowestInstance < lastInstanceTick;
+					bool isDeinitialized = InstanceStatus == InstanceStatus.Deinitialized;
+					shouldWait = lastVariableTick < InstanceTime
+								 && lastTickOfSlowestInstance < InstanceTime;
 					if (!(!isDeinitialized && shouldWait))
 					{
 						VariableOperations variableOperation;
@@ -253,16 +254,16 @@ namespace SmartDev.MultiCurrencyTester.Connect
 						{
 							case VariableOperations.Nothing:
 								result = contract.Variables
-												 .Where(v => v.Name == variableName && v.Tick <= lastInstanceTick)
+												 .Where(v => v.Name == variableName && v.Tick <= InstanceTime)
 												 .Select(v => v.Value)
 												 .LastOrDefault();
 								break;
 							case VariableOperations.Sum:
-								for (int i = 0; i < contract.InstancesCount; ++i)
+								for (int i = 0; i < _instancesCount; ++i)
 								{
 									result += contract.Variables
 													  .Where(v => v.Name == variableName
-																  && v.Tick <= lastInstanceTick
+																  && v.Tick <= InstanceTime
 																  && v.InstaceId == i)
 													  .Select(v => v.Value)
 													  .LastOrDefault();
@@ -297,14 +298,13 @@ namespace SmartDev.MultiCurrencyTester.Connect
 
 		public void SetVariable(string variableName, double variableValue)
 		{
-			using (var lockObj = GetReadLock())
+			using (var lockObj = GetWriteLock())
 			{
 #if _LOGGING
 				Log(string.Format("conn{0}.SetVariable(\"{1}\", {2});\r\n", _instanceId, variableName, variableValue));
 #endif
 				var contract = LoadData();
-				int lastInstanceTick = GetLastInstanceTick(contract);
-				var lastVariableForThisInstanceQuery = contract.Variables.Where(v => v.Tick == lastInstanceTick
+				var lastVariableForThisInstanceQuery = contract.Variables.Where(v => v.Tick == InstanceTime
 																				&& v.InstaceId == _instanceId
 																				&& v.Name == variableName);
 				if (lastVariableForThisInstanceQuery.Any())
@@ -318,92 +318,222 @@ namespace SmartDev.MultiCurrencyTester.Connect
 					contract.Variables.Add(new VariableConract
 					{
 						InstaceId = _instanceId,
-						Tick = lastInstanceTick,
+						Tick = InstanceTime,
 						Name = variableName,
 						Value = variableValue
 					});
 				}
-				SaveData(lockObj, contract);
+				SaveData(contract);
 			}
 		}
 
-		public InstanceStatus GetInstanceStatus()
+		public InstanceStatus InstanceStatus
 		{
-			using (GetReadLock())
+			get { return _instanceStatus; }
+			set
 			{
-				var contract = LoadData();
-				return GetInstanceStatus(contract);
+				if (_instanceStatus != value)
+				{
+					_instanceStatus = value;
+					Write(InstancesStatusesOffset + _instanceId*IntOffset, (int)value);
+				}
 			}
 		}
 
-		public int GetLastInstanceTick()
+		public InstanceStatus GetInstanceStatus(int instanceId)
 		{
-			using (GetReadLock())
+			return (InstanceStatus) ReadInt32(InstancesStatusesOffset + instanceId * IntOffset);
+		}
+
+		public int GetKnownInstancesCount()
+		{
+			int result = 0;
+			for (int i = 0; i < _instancesCount; i++)
 			{
-				var contract = LoadData();
-				return GetLastInstanceTick(contract);
+				if (GetInstanceStatus(i) != InstanceStatus.Unknown)
+				{
+					result++;
+				}
 			}
+			return result;
+		}
+
+		public int InstanceTime
+		{
+			get { return _instanceTime; }
+			set
+			{
+				if (_instanceTime != value)
+				{
+					_instanceTime = value;
+					Write(InstancesTimesOffset + _instanceId * IntOffset, value);
+				}
+			}
+		}
+
+		public int GetInstanceTime(int instanceId)
+		{
+			return ReadInt32(InstancesTimesOffset + instanceId * IntOffset);
 		}
 
 		public bool IsInstanceWaiting { get; private set; }
 
+		private int InstancesCount
+		{
+			get { return ReadInt32(InstancesCountOffset); }
+			set { Write(InstancesCountOffset, value); }
+		}
+
 		private class Lock : IDisposable
 		{
 			private readonly IntPtr _memoryMappedViewHandle;
+			private MemoryMappedViewAccessor _memoryMappedViewAccessor;
 			private readonly Mutex _onWriteLockMutex;
+			private EventWaitHandle _onReaderLockEvent;
 
-			public Lock(IntPtr memoryMappedViewHandle, Mutex onWriteLockMutex)
+			public Lock(IntPtr memoryMappedViewHandle,
+				MemoryMappedViewAccessor memoryMappedViewAccessor,
+				Mutex onWriteLockMutex,
+				EventWaitHandle onReaderLockEvent)
 			{
 				_memoryMappedViewHandle = memoryMappedViewHandle;
+				_memoryMappedViewAccessor = memoryMappedViewAccessor;
 				_onWriteLockMutex = onWriteLockMutex;
+				_onReaderLockEvent = onReaderLockEvent;
 			}
 
-			unsafe public void GetReadLock()
+			public void GetReadLock()
 			{
-				if (_memoryMappedViewHandle != IntPtr.Zero)
+				if (!IsInitLock)
 				{
-					InterlockedIncrement((long*)_memoryMappedViewHandle);
+					while (!_onReaderLockEvent.WaitOne(1000)) { }
+					IsReadLock = true;
 				}
-				_onWriteLockMutex.WaitOne();
+				else
+				{
+					_onWriteLockMutex.WaitOne();
+				}
 			}
 
 			public void GetWriteLock()
 			{
+				if (!IsInitLock)
+				{
+					IsReadLock = true;
+					IsWriteLock = true;
+					_onWriteLockMutex.WaitOne();
+					_onReaderLockEvent.Reset();
+					while (ReadersCount > WritersCount)
+					{
+						Thread.Sleep(1000);
+					}
+				}
 			}
 
-			unsafe public void Dispose()
+			public void Dispose()
 			{
-				if (_memoryMappedViewHandle != IntPtr.Zero)
+				if (IsWriteLock)
 				{
-					InterlockedDecrement((long*)_memoryMappedViewHandle);
+					_onReaderLockEvent.Set();
 				}
-				_onWriteLockMutex.ReleaseMutex();
+
+				if (IsInitLock || IsWriteLock)
+				{
+					_onWriteLockMutex.ReleaseMutex();
+				}
+
+				IsWriteLock = false;
+				IsReadLock = false;
+			}
+
+			//private int ReadersCount { get { return _memoryMappedViewAccessor.ReadInt32(ReadersCountOffset); } }
+			//private int WritersCount { get { return _memoryMappedViewAccessor.ReadInt32(WritersCountOffset); } }
+			private int ReadersCount
+			{
+				get
+				{
+					int result = _memoryMappedViewAccessor.ReadInt32(ReadersCountOffset);
+					return result;
+				}
+			}
+			private int WritersCount
+			{
+				get
+				{
+					int result = _memoryMappedViewAccessor.ReadInt32(WritersCountOffset);
+					return result;
+				}
+			}
+
+			private bool _isReadLock = false;
+			private bool _isWriteLock = false;
+
+			private bool IsInitLock
+			{
+				get
+				{
+					return _onReaderLockEvent == null
+						|| _memoryMappedViewHandle == IntPtr.Zero;
+				}
+			}
+
+			unsafe private bool IsReadLock
+			{
+				get { return _isReadLock; }
+				set
+				{
+					if (!_isReadLock && value)
+					{
+						InterlockedIncrement((long*)(_memoryMappedViewHandle + ReadersCountOffset));
+					}
+					if (_isReadLock && !value)
+					{
+						InterlockedDecrement((long*)(_memoryMappedViewHandle + ReadersCountOffset));
+					}
+					_isReadLock = value;
+				}
+			}
+
+			unsafe private bool IsWriteLock
+			{
+				get { return _isWriteLock; }
+				set
+				{
+					if (!_isWriteLock && value)
+					{
+						InterlockedIncrement((long*) (_memoryMappedViewHandle + WritersCountOffset));
+					}
+					if (_isWriteLock && !value)
+					{
+						InterlockedDecrement((long*)(_memoryMappedViewHandle + WritersCountOffset));
+					}
+					_isWriteLock = value;
+				}
 			}
 		}
 
 		private Lock GetInitLock()
 		{
-			var lockObj = new Lock(IntPtr.Zero, _onWriteLockMutex);
+			var lockObj = new Lock(IntPtr.Zero, null, _onWriteLockMutex, null);
 			lockObj.GetReadLock();
 			return lockObj;
 		}
 
 		private Lock GetReadLock()
 		{
-			var lockObj = new Lock(_memoryMappedViewHandle, _onWriteLockMutex);
+			var lockObj = new Lock(_memoryMappedViewHandle, _memoryMappedViewAccessor, _onWriteLockMutex, _onReaderLockEvent);
 			lockObj.GetReadLock();
 			return lockObj;
 		}
 
 		private Lock GetWriteLock()
 		{
-			var lockObj = new Lock(_memoryMappedViewHandle, _onWriteLockMutex);
-			//lockObj.GetWriteLock();
-			lockObj.GetReadLock();
+			var lockObj = new Lock(_memoryMappedViewHandle, _memoryMappedViewAccessor, _onWriteLockMutex, _onReaderLockEvent);
+			lockObj.GetWriteLock();
 			return lockObj;
 		}
 
-		private void DataChanged()
+		private void OnDataChanged()
 		{
 			_onDataUpdatedEvent.Set();
 		}
@@ -415,9 +545,14 @@ namespace SmartDev.MultiCurrencyTester.Connect
 			IsInstanceWaiting = false;
 		}
 
+		private int ReadInt32(int offset)
+		{
+			return _memoryMappedViewAccessor.ReadInt32(offset);
+		}
+
 		private int ReadInt32(ref int offset)
 		{
-			int result = _memoryMappedViewAccessor.ReadInt32(offset);
+			int result = ReadInt32(offset);
 			offset += IntOffset;
 			return result;
 		}
@@ -439,9 +574,14 @@ namespace SmartDev.MultiCurrencyTester.Connect
 			return Encoding.ASCII.GetString(buffer);
 		}
 
-		private void Write(ref int offset, int value)
+		private void Write(int offset, int value)
 		{
 			_memoryMappedViewAccessor.Write(offset, value);
+		}
+
+		private void Write(ref int offset, int value)
+		{
+			Write(offset, value);
 			offset += IntOffset;
 		}
 
@@ -461,22 +601,8 @@ namespace SmartDev.MultiCurrencyTester.Connect
 
 		private MemoryContract LoadData()
 		{
-			int offset = IntOffset;
+			int offset = MemoryContractOffset;
 			var contract = new MemoryContract();
-
-			contract.InstancesCount = ReadInt32(ref offset);
-
-			int instancesStatusesCount = ReadInt32(ref offset);
-			for (int i = 0; i < instancesStatusesCount; i++)
-			{
-				contract.InstancesStatuses[ReadInt32(ref offset)] = (InstanceStatus)ReadInt32(ref offset);
-			}
-
-			int instancesTimeCount = ReadInt32(ref offset);
-			for (int i = 0; i < instancesTimeCount; i++)
-			{
-				contract.InstancesTime[ReadInt32(ref offset)] = ReadInt32(ref offset);
-			}
 
 			int variablesCount = ReadInt32(ref offset);
 			for (int i = 0; i < variablesCount; i++)
@@ -496,30 +622,12 @@ namespace SmartDev.MultiCurrencyTester.Connect
 				contract.VariableOperations[ReadString(ref offset)] = (VariableOperations) ReadInt32(ref offset);
 			}
 
-			//_memoryMappedViewStream.Position = 0;
 			return contract;
 		}
 
-		private void SaveData(Lock lockObj, MemoryContract contract)
+		private void SaveData(MemoryContract contract)
 		{
-			lockObj.GetWriteLock();
-			int offset = IntOffset;
-
-			Write(ref offset, contract.InstancesCount);
-
-			Write(ref offset, contract.InstancesStatuses.Count);
-			foreach (var status in contract.InstancesStatuses)
-			{
-				Write(ref offset, status.Key);
-				Write(ref offset, (int)status.Value);
-			}
-
-			Write(ref offset, contract.InstancesTime.Count);
-			foreach (var time in contract.InstancesTime)
-			{
-				Write(ref offset, time.Key);
-				Write(ref offset, time.Value);
-			}
+			int offset = MemoryContractOffset;
 
 			Write(ref offset, contract.Variables.Count);
 			foreach (var variable in contract.Variables)
@@ -542,36 +650,17 @@ namespace SmartDev.MultiCurrencyTester.Connect
 				throw new InternalBufferOverflowException();
 			}
 
-			DataChanged();
-		}
-
-		private InstanceStatus GetInstanceStatus(MemoryContract contract)
-		{
-			InstanceStatus result;
-			contract.InstancesStatuses.TryGetValue(_instanceId, out result);
-			return result;
-		}
-
-		private int GetLastInstanceTick(MemoryContract contract, int instanceId)
-		{
-			int result;
-			if (!contract.InstancesTime.TryGetValue(instanceId, out result)) return 0;
-			return result;
-		}
-
-		private int GetLastInstanceTick(MemoryContract contract)
-		{
-			return GetLastInstanceTick(contract, _instanceId);
+			OnDataChanged();
 		}
 
 		private int GetLastTickOfSlowestInstance(MemoryContract contract)
 		{
-			if (contract.InstancesCount == 0) return 0;
+			if (_instancesCount == 0) return 0;
 			int result = int.MaxValue;
-			for (int i = 0; i < contract.InstancesCount; ++i)
+			for (int i = 0; i < _instancesCount; ++i)
 			{
-				if (contract.InstancesStatuses[i] == InstanceStatus.Deinitialized) continue;
-				int tick = GetLastInstanceTick(contract, i);
+				if (GetInstanceStatus(i) == InstanceStatus.Deinitialized) continue;
+				int tick = GetInstanceTime(i);
 				result = Math.Min(result, tick);
 			}
 			return result;
@@ -579,9 +668,9 @@ namespace SmartDev.MultiCurrencyTester.Connect
 
 		private int GetLastVariableTickOfSlowestInstance(MemoryContract contract, string variableName)
 		{
-			if (contract.InstancesCount == 0) return 0;
+			if (_instancesCount == 0) return 0;
 			int result = int.MaxValue;
-			for (int i = 0; i < contract.InstancesCount; ++i)
+			for (int i = 0; i < _instancesCount; ++i)
 			{
 				int tick = GetLastVariableTickOfInstance(contract, variableName, i);
 				result = Math.Min(result, tick);
@@ -591,9 +680,8 @@ namespace SmartDev.MultiCurrencyTester.Connect
 
 		private int GetLastVariableTickOfInstance(MemoryContract contract, string variableName, int instanceId)
 		{
-			int lastInstanceTick = GetLastInstanceTick(contract);
 			var variableQueryOfInstance = contract.Variables.Where(v => v.Name == variableName
-			                                                            && v.Tick <= lastInstanceTick
+																		&& v.Tick <= InstanceTime
 			                                                            && v.InstaceId == instanceId);
 			if (!variableQueryOfInstance.Any()) return 0;
 			int lastVariableTick = variableQueryOfInstance.Max(v => v.Tick);
@@ -602,8 +690,7 @@ namespace SmartDev.MultiCurrencyTester.Connect
 
 		private int GetLastVariableTick(MemoryContract contract, string variableName)
 		{
-			int lastInstanceTick = GetLastInstanceTick(contract);
-			var variableQuery = contract.Variables.Where(v => v.Name == variableName && v.Tick <= lastInstanceTick);
+			var variableQuery = contract.Variables.Where(v => v.Name == variableName && v.Tick <= InstanceTime);
 			if (!variableQuery.Any()) return 0;
 			int lastVariableTick = variableQuery.Max(v => v.Tick);
 			return lastVariableTick;
