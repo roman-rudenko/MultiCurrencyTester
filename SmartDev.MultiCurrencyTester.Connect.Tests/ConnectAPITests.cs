@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Diagnostics;
 using System.Threading;
 using NUnit.Framework;
 
@@ -384,7 +385,7 @@ namespace SmartDev.MultiCurrencyTester.Connect.Tests
 			}
 		}
 
-		[Test]
+		[Test, Ignore]
 		public void NextTick_ShouldDeleteOldVariables()
 		{
 			const int instancesCount = 2;
@@ -481,7 +482,7 @@ namespace SmartDev.MultiCurrencyTester.Connect.Tests
 			Timeout = 10000000;
 
 			const int instancesCount = 10;
-			const int cycleCount = 10;
+			const int cycleCount = 100;
 			var rnd = new Random();
 
 			using (var conn0 = new ConnectImpl())
@@ -522,6 +523,9 @@ namespace SmartDev.MultiCurrencyTester.Connect.Tests
 						}
 					});
 
+				var stopwatch = new Stopwatch();
+				stopwatch.Start();
+
 				using (runTest(conn0))
 				using (runTest(conn1))
 				using (runTest(conn2))
@@ -534,6 +538,9 @@ namespace SmartDev.MultiCurrencyTester.Connect.Tests
 				using (runTest(conn9))
 				{
 				}
+
+				stopwatch.Stop();
+				Console.WriteLine(stopwatch.Elapsed);
 			}
 		}
 	}
