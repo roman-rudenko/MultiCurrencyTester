@@ -28,12 +28,10 @@ namespace SmartDev.MultiCurrencyTester.Connect
 	{
 		public MemoryContract()
 		{
-			//InstancesTime = new Dictionary<int, int>();
 			Variables = new List<VariableConract>();
 			VariableOperations = new Dictionary<string, VariableOperations>();
 		}
 
-		//public Dictionary<int, int> InstancesTime { get; set; }					// <InstanceId, Tick>
 		public List<VariableConract> Variables { get; set; }
 		public Dictionary<string, VariableOperations> VariableOperations { get; set; } // <VariableName, VariableOperations>
 	}

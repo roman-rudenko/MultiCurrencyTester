@@ -45,13 +45,13 @@ namespace SmartDev.MultiCurrencyTester.Connect
 		}
 
 		[DllExport("NextTick", CallingConvention = CallingConvention.Cdecl)]
-		public static void NextTick(int tick)
+		public static void NextTick(int tick, double balance, double equity)
 		{
 			try
 			{
 				if (_impl != null)
 				{
-					_impl.NextTick(tick);
+					_impl.NextTick(tick, balance, equity);
 				}
 			}
 			catch (Exception ex)
