@@ -18,113 +18,52 @@ namespace SmartDev.MultiCurrencyTester.Connect
 		[DllImport("kernel32.dll", SetLastError = true)]
 		unsafe public static extern long InterlockedDecrement(long* lpAddend);
 
-		private const int IntOffset = sizeof(int);
-		private const int DoubleOffset = sizeof(double);
-		private const int ByteOffset = sizeof(byte);
+		[DllImport("kernel32.dll", SetLastError = true)]
+		unsafe public static extern long InterlockedCompareExchange(long* lpDestination, long exchange, long comparand);
 
-		private const int InstancesCountOffset = 0;
-		private const int VariablesTicksOffset = InstancesCountOffset + IntOffset;
-		private const int InstancesStatusesOffset = VariablesTicksOffset + IntOffset;
-		private int InstancesTimesOffset = -1;
-		private int MemoryContractOffset = -1;
+		//[DllImport("kernel32.dll", SetLastError = true)]
+		//unsafe public static extern long InterlockedCompareExchangeRelease(long* lpDestination, long exchange, long comparand);
 
-		private const long MemoryMappedFileSize = 0xA00000; // 10 megabytes
-		private const string MemoryMappedFileName = "SmartDev.MultiCurrencyTester.MemoryMappedFile";
-		private const string OnDataUpdatedEventName = "SmartDev.MultiCurrencyTester.OnDataUpdatedEvent";
-		private const string OnWriteLockMutexName = "SmartDev.MultiCurrencyTester.OnWriteLockMutex";
-
-		//private readonly DateTime MinMt4Date = new DateTime(1970, 1, 1, 0, 0, 0, 0);
-		//private int LastArchivedMonth = -1;
+		private MemOperations _memOp = new MemOperations();
 
 		private string _balanceFileNameTemplate = "d:\\balance\\balance_{0}.csv";
 		private string _balanceFileName;
 		FileStream _balanceFile;
 		StreamWriter _balanceFileWriter;
-		private MemoryMappedFile _memoryMappedFile;
-		private MemoryMappedViewAccessor _memoryMappedViewAccessor;
-		private MemoryMappedViewStream _memoryMappedViewStream;
-		private IntPtr _memoryMappedViewHandle;
 		private EventWaitHandle _onDataUpdatedEvent;
-		private Mutex _onWriteLockMutex;
-		private int _instanceId = -1;
-		private int _instancesCount = -1;
-		private InstanceStatus _instanceStatus = InstanceStatus.Unknown;
-		private int _instanceTime = -1;
 
 		public ConnectImpl()
 		{
-			_onDataUpdatedEvent = new EventWaitHandle(true, EventResetMode.ManualReset, OnDataUpdatedEventName);
-			_onWriteLockMutex = new Mutex(false, OnWriteLockMutexName);
-
-			using (GetLock())
-			{
-				try
-				{
-					_memoryMappedFile = MemoryMappedFile.OpenExisting(MemoryMappedFileName);
-				}
-				catch (FileNotFoundException)
-				{
-					_memoryMappedFile = MemoryMappedFile.CreateNew(MemoryMappedFileName, MemoryMappedFileSize);
-				}
-
-				_memoryMappedViewAccessor = _memoryMappedFile.CreateViewAccessor();
-				_memoryMappedViewStream = _memoryMappedFile.CreateViewStream();
-				_memoryMappedViewHandle = _memoryMappedViewStream.SafeMemoryMappedViewHandle.DangerousGetHandle();
-			}
+			_onDataUpdatedEvent = new EventWaitHandle(true, EventResetMode.ManualReset, Constants.OnDataUpdatedEventName);
 		}
 
 		public void Dispose()
 		{
-			using (GetLock())
+			if (_memOp != null)
 			{
-				_memoryMappedViewHandle = IntPtr.Zero;
-
-				if (_balanceFileWriter != null)
-				{
-					_balanceFileWriter.Close();
-					_balanceFileWriter.Dispose();
-					_balanceFileWriter = null;
-				}
-
-				if (_balanceFile != null)
-				{
-					_balanceFile.Close();
-					_balanceFile.Dispose();
-					_balanceFile = null;
-				}
-
-				if (_memoryMappedViewStream != null)
-				{
-					_memoryMappedViewStream.Close();
-					_memoryMappedViewStream.Dispose();
-					_memoryMappedViewStream = null;
-				}
-
-				if (_memoryMappedViewAccessor != null)
-				{
-					_memoryMappedViewAccessor.Dispose();
-					_memoryMappedViewAccessor = null;
-				}
-
-				if (_memoryMappedFile != null)
-				{
-					_memoryMappedFile.Dispose();
-					_memoryMappedFile = null;
-				}
-
-				if (_onDataUpdatedEvent != null)
-				{
-					_onDataUpdatedEvent.Close();
-					_onDataUpdatedEvent.Dispose();
-					_onDataUpdatedEvent = null;
-				}
+				_memOp.Dispose();
+				_memOp = null;
 			}
 
-			if (_onWriteLockMutex != null)
+			if (_balanceFileWriter != null)
 			{
-				_onWriteLockMutex.Close();
-				_onWriteLockMutex.Dispose();
-				_onWriteLockMutex = null;
+				_balanceFileWriter.Close();
+				_balanceFileWriter.Dispose();
+				_balanceFileWriter = null;
+			}
+
+			if (_balanceFile != null)
+			{
+				_balanceFile.Close();
+				_balanceFile.Dispose();
+				_balanceFile = null;
+			}
+
+			if (_onDataUpdatedEvent != null)
+			{
+				_onDataUpdatedEvent.Close();
+				_onDataUpdatedEvent.Dispose();
+				_onDataUpdatedEvent = null;
 			}
 		}
 
@@ -134,10 +73,15 @@ namespace SmartDev.MultiCurrencyTester.Connect
 			if (instancesCount < 1) throw new ArgumentException("instancesCount");
 			if (instanceId >= instancesCount) throw new ArgumentException("instanceId");
 
-			_instanceId = instanceId;
-			_instancesCount = instancesCount;
+			_memOp.InstanceId = instanceId;
+			_memOp.InstancesCount = instancesCount;
+			_memOp.InstanceStatus = InstanceStatus.NotInitialized;
 
-			_balanceFileName = string.Format(_balanceFileNameTemplate, _instanceId);
+#if _LOGGING
+				Log(string.Format("conn{0}.InitializeTestAPI({1}, {2});\r\n", _instanceId, instanceId, instancesCount));
+#endif
+
+			_balanceFileName = string.Format(_balanceFileNameTemplate, _memOp.InstanceId);
 			if (!Directory.Exists(Path.GetDirectoryName(_balanceFileName)))
 			{
 				Directory.CreateDirectory(Path.GetDirectoryName(_balanceFileName));
@@ -146,31 +90,12 @@ namespace SmartDev.MultiCurrencyTester.Connect
 			_balanceFileWriter = new StreamWriter(_balanceFile);
 
 			bool isInitialized = false;
-
-			int cachedInstancesCount = ReadInt32(InstancesCountOffset);
-			if (cachedInstancesCount == 0)
-			{
-				Write(InstancesCountOffset, _instancesCount);
-			}
-			else if (cachedInstancesCount != _instancesCount)
-			{
-				throw new ArgumentException("instancesCount");
-			}
-
-			InstancesTimesOffset = InstancesStatusesOffset + _instancesCount * IntOffset;
-			MemoryContractOffset = InstancesTimesOffset + _instancesCount * IntOffset;
-
-#if _LOGGING
-				Log(string.Format("conn{0}.InitializeTestAPI({1}, {2});\r\n", _instanceId, instanceId, instancesCount));
-#endif
-			InstanceStatus = InstanceStatus.NotInitialized;
-
 			while (!isInitialized)
 			{
-				isInitialized = GetKnownInstancesCount() == _instancesCount;
+				isInitialized = GetKnownInstancesCount() == _memOp.InstancesCount;
 				if (isInitialized)
 				{
-					InstanceStatus = InstanceStatus.Initialized;
+					_memOp.InstanceStatus = InstanceStatus.Initialized;
 					OnDataChanged();
 				}
 				else
@@ -182,64 +107,30 @@ namespace SmartDev.MultiCurrencyTester.Connect
 
 		public void DeinitializeTestAPI()
 		{
-			if (_instanceId < 0) throw new InvalidOperationException();
+			if (_memOp.InstanceId < 0) throw new InvalidOperationException();
 #if _LOGGING
 			Log(string.Format("conn{0}.DeinitializeTestAPI();\r\n", _instanceId));
 #endif
-			InstanceStatus = InstanceStatus.Deinitialized;
+			_memOp.InstanceStatus = InstanceStatus.Deinitialized;
 			OnDataChanged();
 		}
 
 		public void DeclareVariable(string variableName, VariableOperations variableOperation)
 		{
-			using (GetLock())
-			{
 #if _LOGGING
 				Log(string.Format("conn{0}.DeclareVariable(\"{1}\", VariableOperations.{2});\r\n", _instanceId, variableName, variableOperation));
 #endif
-				var contract = LoadData();
-				contract.VariableOperations[variableName] = variableOperation;
-				SaveData(contract);
-				OnDataChanged();
-			}
+			_memOp.SetVariableOperation(variableName, variableOperation);
+			OnDataChanged();
 		}
 
 		public void NextTick(int tick, double balance, double equity)
 		{
-			InstanceTime = tick;
+			_memOp.InstanceTime = tick;
 			_balanceFileWriter.WriteLine("{0};{1};{2};", tick, balance, equity);
-
-			//var tickTime = MinMt4Date.AddSeconds(tick);
-
-			//if (tickTime.Month != LastArchivedMonth)
-			//{
-			//    if (LastArchivedMonth == -1)
-			//    {
-			//        LastArchivedMonth = tickTime.Month;
-			//    }
-			//    else
-			//    {
-			//        if (_balanceFileWriter != null && _balanceFile != null)
-			//        {
-			//            _balanceFileWriter.Close();
-			//            _balanceFileWriter.Dispose();
-			//            _balanceFileWriter = null;
-			//            _balanceFile.Close();
-			//            _balanceFile.Dispose();
-			//            _balanceFile = null;
-
-			//            File.Move(_balanceFileName, string.Format(_balanceFileNameTemplate, _instanceId + "_" + tickTime.ToString("yyyy.MM")));
-			//            LastArchivedMonth = tickTime.Month;
-
-			//            _balanceFile = File.OpenWrite(_balanceFileName);
-			//            _balanceFileWriter = new StreamWriter(_balanceFile);
-			//        }
-			//    }
-			//}
 #if _LOGGING
 			Log(string.Format("conn{0}.NextTick({1});\r\n", _instanceId, tick));
 #endif
-			CleanVariables();
 		}
 
 		public double GetVariable(string variableName)
@@ -251,48 +142,35 @@ namespace SmartDev.MultiCurrencyTester.Connect
 #endif
 			while (shouldWait)
 			{
-				MemoryContract contract;
-				using (GetLock())
-				{
 #if _LOGGING
-					if (!isLogged)
-					{
-						isLogged = true;
-						Log(string.Format("/*{2} conn{0}.GetVariable(\"{1}\");*/\r\n", _instanceId, variableName, tran));
-					}
-#endif
-					contract = LoadData();
+				if (!isLogged)
+				{
+					isLogged = true;
+					Log(string.Format("/*{2} conn{0}.GetVariable(\"{1}\");*/\r\n", _instanceId, variableName, tran));
 				}
-				int lastTickOfSlowestInstance = GetLastTickOfSlowestInstance(contract);
-				int lastVariableTick = GetLastVariableTick(contract, variableName);
-				bool isDeinitialized = InstanceStatus == InstanceStatus.Deinitialized;
-				shouldWait = lastVariableTick < InstanceTime
-								&& lastTickOfSlowestInstance < InstanceTime;
+#endif
+
+				bool isDeinitialized = _memOp.InstanceStatus == InstanceStatus.Deinitialized;
+				shouldWait = GetTimeOfSlowestInstance() < _memOp.InstanceTime;
 				if (!(!isDeinitialized && shouldWait))
 				{
-					VariableOperations variableOperation;
-					contract.VariableOperations.TryGetValue(variableName, out variableOperation);
-
 					double result = 0;
 
-					switch (variableOperation)
+					switch (_memOp.GetVariableOperation(variableName))
 					{
 						case VariableOperations.Nothing:
-							result = contract.Variables
-												.Where(v => v.Name == variableName && v.Tick <= InstanceTime)
-												.Select(v => v.Value)
-												.LastOrDefault();
+							result = _memOp.GetVariableValue(variableName);
 							break;
 						case VariableOperations.Sum:
-							for (int i = 0; i < _instancesCount; ++i)
-							{
-								result += contract.Variables
-													.Where(v => v.Name == variableName
-																&& v.Tick <= InstanceTime
-																&& v.InstaceId == i)
-													.Select(v => v.Value)
-													.LastOrDefault();
-							}
+							//for (int i = 0; i < _instancesCount; ++i)
+							//{
+							//    result += contract.Variables
+							//                      .Where(v => v.Name == variableName
+							//                                  && v.Tick <= InstanceTick
+							//                                  && v.InstaceId == i)
+							//                      .Select(v => v.Value)
+							//                      .LastOrDefault();
+							//}
 							break;
 						default:
 							throw new NotImplementedException();
@@ -308,76 +186,48 @@ namespace SmartDev.MultiCurrencyTester.Connect
 			return 0;
 		}
 
-		public double GetVariableForTick(string variableName, int tick)
-		{
-			using (GetLock())
-			{
-				var contract = LoadData();
-				return contract.Variables
-							   .Where(v => v.Name == variableName && v.Tick == tick)
-							   .Select(v => v.Value)
-							   .LastOrDefault();
-			}
-		}
+		//public double GetVariableForTick(string variableName, int tick)
+		//{
+		//    using (GetLock())
+		//    {
+		//        var contract = LoadData();
+		//        return contract.Variables
+		//                       .Where(v => v.Name == variableName && v.Tick == tick)
+		//                       .Select(v => v.Value)
+		//                       .LastOrDefault();
+		//    }
+		//}
 
 		public void SetVariable(string variableName, double variableValue)
 		{
-			using (GetLock())
+			bool shouldWait = true;
+			while (shouldWait)
 			{
+				bool isDeinitialized = _memOp.InstanceStatus == InstanceStatus.Deinitialized;
+				shouldWait = GetTimeOfSlowestInstance() < _memOp.InstanceTime;
+				if (!(!isDeinitialized && shouldWait))
+				{
+					_memOp.SetVariableValue(variableName, variableValue);
+					OnDataChanged();
+				}
+				WaitDataChanges();
+			}
 #if _LOGGING
 				Log(string.Format("conn{0}.SetVariable(\"{1}\", {2});\r\n", _instanceId, variableName, variableValue));
 #endif
-				var contract = LoadData();
-				var lastVariableForThisInstanceQuery = contract.Variables.Where(v => v.Tick == InstanceTime
-																				&& v.InstaceId == _instanceId
-																				&& v.Name == variableName);
-				if (lastVariableForThisInstanceQuery.Any())
-				{
-					var lastVariableForThisInstance = lastVariableForThisInstanceQuery.Single();
-					if (lastVariableForThisInstance.Value == variableValue) return;
-					lastVariableForThisInstance.Value = variableValue;
-				}
-				else
-				{
-					contract.Variables.Add(new VariableConract
-					{
-						InstaceId = _instanceId,
-						Tick = InstanceTime,
-						Name = variableName,
-						Value = variableValue
-					});
-				}
-				//CleanVariables(contract);
-				SaveData(contract);
-				//VariablesTicks = contract.Variables.Count;
-				OnDataChanged();
-			}
 		}
 
-		public InstanceStatus InstanceStatus
-		{
-			get { return _instanceStatus; }
-			set
-			{
-				if (_instanceStatus != value)
-				{
-					_instanceStatus = value;
-					Write(InstancesStatusesOffset + _instanceId*IntOffset, (int)value);
-				}
-			}
-		}
+		public bool IsInstanceWaiting { get; private set; }
 
-		public InstanceStatus GetInstanceStatus(int instanceId)
-		{
-			return (InstanceStatus) ReadInt32(InstancesStatusesOffset + instanceId * IntOffset);
-		}
+		public InstanceStatus InstanceStatus { get { return _memOp.InstanceStatus; } }
 
-		public int GetKnownInstancesCount()
+		private int GetKnownInstancesCount()
 		{
 			int result = 0;
-			for (int i = 0; i < _instancesCount; i++)
+			int instancesCount = _memOp.InstancesCount;
+			for (int i = 0; i < instancesCount; i++)
 			{
-				if (GetInstanceStatus(i) != InstanceStatus.Unknown)
+				if (_memOp.GetInstanceStatus(i) != InstanceStatus.Unknown)
 				{
 					result++;
 				}
@@ -385,51 +235,16 @@ namespace SmartDev.MultiCurrencyTester.Connect
 			return result;
 		}
 
-		public int InstanceTime
+		private int GetTimeOfSlowestInstance()
 		{
-			get { return _instanceTime; }
-			set
+			int result = int.MaxValue;
+			int instancesCount = _memOp.InstancesCount;
+			for (int i = 0; i < instancesCount; i++)
 			{
-				if (_instanceTime != value)
-				{
-					_instanceTime = value;
-					Write(InstancesTimesOffset + _instanceId * IntOffset, value);
-				}
+				if (_memOp.GetInstanceStatus(i) == InstanceStatus.Deinitialized) continue;
+				result = Math.Min(result, _memOp.GetInstanceTime(i));
 			}
-		}
-
-		public int GetInstanceTime(int instanceId)
-		{
-			return ReadInt32(InstancesTimesOffset + instanceId * IntOffset);
-		}
-
-		public bool IsInstanceWaiting { get; private set; }
-
-		//private int VariablesTicks
-		//{
-		//    get { return ReadInt32(VariablesTicksOffset); }
-		//    set { Write(VariablesTicksOffset, value); }
-		//}
-
-		private class Lock : IDisposable
-		{
-			private readonly Mutex _onWriteLockMutex;
-
-			public Lock(Mutex onWriteLockMutex)
-			{
-				_onWriteLockMutex = onWriteLockMutex;
-				_onWriteLockMutex.WaitOne();
-			}
-
-			public void Dispose()
-			{
-				_onWriteLockMutex.ReleaseMutex();
-			}
-		}
-
-		private Lock GetLock()
-		{
-			return new Lock(_onWriteLockMutex);;
+			return result;
 		}
 
 		private void OnDataChanged()
@@ -445,178 +260,48 @@ namespace SmartDev.MultiCurrencyTester.Connect
 			IsInstanceWaiting = false;
 		}
 
-		private void CleanVariables(/*MemoryContract contract*/)
-		{
-			//if (VariablesTicks > 50)
-			{
-				using (GetLock())
-				{
-					var contract = LoadData();
-					int lastTickOfSlowestInstance = GetLastTickOfSlowestInstance(contract);
-					foreach (var variableName in contract.Variables.Select(v => v.Name).Distinct().ToArray())
-					{
-						int lastVariableTickOfSlowestInstance = GetLastVariableTickOfSlowestInstance(contract, variableName);
-						contract.Variables.RemoveAll(v => v.Name == variableName
-														  && v.Tick < lastTickOfSlowestInstance
-														  && v.Tick < lastVariableTickOfSlowestInstance);
-					}
-					SaveData(contract);
-					//VariablesTicks = contract.Variables.Count;
-					OnDataChanged();
-				}
-			}
-		}
+		//private int GetLastTickOfSlowestInstance(MemoryContract contract)
+		//{
+		//    if (_instancesCount == 0) return 0;
+		//    int result = int.MaxValue;
+		//    for (int i = 0; i < _instancesCount; ++i)
+		//    {
+		//        if (GetInstanceStatus(i) == InstanceStatus.Deinitialized) continue;
+		//        int tick = GetInstanceTime(i);
+		//        result = Math.Min(result, tick);
+		//    }
+		//    return result;
+		//}
 
-		private int ReadInt32(int offset)
-		{
-			return _memoryMappedViewAccessor.ReadInt32(offset);
-		}
+		//private int GetLastVariableTickOfSlowestInstance(MemoryContract contract, string variableName)
+		//{
+		//    if (_instancesCount == 0) return 0;
+		//    int result = int.MaxValue;
+		//    for (int i = 0; i < _instancesCount; ++i)
+		//    {
+		//        int tick = GetLastVariableTickOfInstance(contract, variableName, i);
+		//        result = Math.Min(result, tick);
+		//    }
+		//    return result;
+		//}
 
-		private int ReadInt32(ref int offset)
-		{
-			int result = ReadInt32(offset);
-			offset += IntOffset;
-			return result;
-		}
+		//private int GetLastVariableTickOfInstance(MemoryContract contract, string variableName, int instanceId)
+		//{
+		//    var variableQueryOfInstance = contract.Variables.Where(v => v.Name == variableName
+		//                                                                && v.Tick <= InstanceTick
+		//                                                                && v.InstaceId == instanceId);
+		//    if (!variableQueryOfInstance.Any()) return 0;
+		//    int lastVariableTick = variableQueryOfInstance.Max(v => v.Tick);
+		//    return lastVariableTick;
+		//}
 
-		private double ReadDouble(ref int offset)
-		{
-			double result = _memoryMappedViewAccessor.ReadDouble(offset);
-			offset += DoubleOffset;
-			return result;
-		}
-
-		private string ReadString(ref int offset)
-		{
-			int size = ReadInt32(ref offset);
-			var buffer = new byte[size];
-			int read = _memoryMappedViewAccessor.ReadArray(offset, buffer, 0, size);
-			if (read != size) throw new NotImplementedException();
-			offset += size * ByteOffset;
-			return Encoding.ASCII.GetString(buffer);
-		}
-
-		private void Write(int offset, int value)
-		{
-			_memoryMappedViewAccessor.Write(offset, value);
-		}
-
-		private void Write(ref int offset, int value)
-		{
-			Write(offset, value);
-			offset += IntOffset;
-		}
-
-		private void Write(ref int offset, double value)
-		{
-			_memoryMappedViewAccessor.Write(offset, value);
-			offset += DoubleOffset;
-		}
-
-		private void Write(ref int offset, string value)
-		{
-			var buffer = Encoding.ASCII.GetBytes(value);
-			Write(ref offset, buffer.Length);
-			_memoryMappedViewAccessor.WriteArray(offset, buffer, 0, buffer.Length);
-			offset += buffer.Length * ByteOffset;
-		}
-
-		private MemoryContract LoadData()
-		{
-			int offset = MemoryContractOffset;
-			var contract = new MemoryContract();
-
-			int variablesCount = ReadInt32(ref offset);
-			for (int i = 0; i < variablesCount; i++)
-			{
-				contract.Variables.Add(new VariableConract
-					{
-						InstaceId = ReadInt32(ref offset),
-						Tick = ReadInt32(ref offset),
-						Name = ReadString(ref offset),
-						Value = ReadDouble(ref offset)
-					});
-			}
-
-			int variableOperationsCount = ReadInt32(ref offset);
-			for (int i = 0; i < variableOperationsCount; i++)
-			{
-				contract.VariableOperations[ReadString(ref offset)] = (VariableOperations) ReadInt32(ref offset);
-			}
-
-			return contract;
-		}
-
-		private void SaveData(MemoryContract contract)
-		{
-			int offset = MemoryContractOffset;
-
-			Write(ref offset, contract.Variables.Count);
-			foreach (var variable in contract.Variables)
-			{
-				Write(ref offset, variable.InstaceId);
-				Write(ref offset, variable.Tick);
-				Write(ref offset, variable.Name);
-				Write(ref offset, variable.Value);
-			}
-
-			Write(ref offset, contract.VariableOperations.Count);
-			foreach (var varOperation in contract.VariableOperations)
-			{
-				Write(ref offset, varOperation.Key);
-				Write(ref offset, (int)varOperation.Value);
-			}
-
-			if (offset > MemoryMappedFileSize)
-			{
-				throw new InternalBufferOverflowException();
-			}
-
-			OnDataChanged();
-		}
-
-		private int GetLastTickOfSlowestInstance(MemoryContract contract)
-		{
-			if (_instancesCount == 0) return 0;
-			int result = int.MaxValue;
-			for (int i = 0; i < _instancesCount; ++i)
-			{
-				if (GetInstanceStatus(i) == InstanceStatus.Deinitialized) continue;
-				int tick = GetInstanceTime(i);
-				result = Math.Min(result, tick);
-			}
-			return result;
-		}
-
-		private int GetLastVariableTickOfSlowestInstance(MemoryContract contract, string variableName)
-		{
-			if (_instancesCount == 0) return 0;
-			int result = int.MaxValue;
-			for (int i = 0; i < _instancesCount; ++i)
-			{
-				int tick = GetLastVariableTickOfInstance(contract, variableName, i);
-				result = Math.Min(result, tick);
-			}
-			return result;
-		}
-
-		private int GetLastVariableTickOfInstance(MemoryContract contract, string variableName, int instanceId)
-		{
-			var variableQueryOfInstance = contract.Variables.Where(v => v.Name == variableName
-																		&& v.Tick <= InstanceTime
-			                                                            && v.InstaceId == instanceId);
-			if (!variableQueryOfInstance.Any()) return 0;
-			int lastVariableTick = variableQueryOfInstance.Max(v => v.Tick);
-			return lastVariableTick;
-		}
-
-		private int GetLastVariableTick(MemoryContract contract, string variableName)
-		{
-			var variableQuery = contract.Variables.Where(v => v.Name == variableName && v.Tick <= InstanceTime);
-			if (!variableQuery.Any()) return 0;
-			int lastVariableTick = variableQuery.Max(v => v.Tick);
-			return lastVariableTick;
-		}
+		//private int GetLastVariableTick(MemoryContract contract, string variableName)
+		//{
+		//    var variableQuery = contract.Variables.Where(v => v.Name == variableName && v.Tick <= InstanceTick);
+		//    if (!variableQuery.Any()) return 0;
+		//    int lastVariableTick = variableQuery.Max(v => v.Tick);
+		//    return lastVariableTick;
+		//}
 
 #if _LOGGING
 		private void Log(string line)

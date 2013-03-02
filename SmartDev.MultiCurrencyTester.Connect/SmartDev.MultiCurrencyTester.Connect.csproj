@@ -81,8 +81,11 @@
   <ItemGroup>
     <Compile Include="ConnectAPI.cs" />
     <Compile Include="ConnectImpl.cs" />
-    <Compile Include="MemoryContract.cs" />
+    <Compile Include="Contracts.cs" />
+    <Compile Include="Constants.cs" />
+    <Compile Include="MemOperations.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="UpdateLock.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />
