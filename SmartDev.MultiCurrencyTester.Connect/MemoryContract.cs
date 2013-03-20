@@ -19,8 +19,6 @@ namespace SmartDev.MultiCurrencyTester.Connect
 	public class VariableConract
 	{
 		public int InstaceId { get; set; }
-		public int Tick { get; set; }
-		public string Name { get; set; }
 		public double Value { get; set; }
 	}
 
@@ -28,11 +26,11 @@ namespace SmartDev.MultiCurrencyTester.Connect
 	{
 		public MemoryContract()
 		{
-			Variables = new List<VariableConract>();
+			Variables = new Dictionary<string, List<VariableConract>>();
 			VariableOperations = new Dictionary<string, VariableOperations>();
 		}
 
-		public List<VariableConract> Variables { get; set; }
+		public Dictionary<string, List<VariableConract>> Variables { get; set; } // <VariableName, VariableConract>
 		public Dictionary<string, VariableOperations> VariableOperations { get; set; } // <VariableName, VariableOperations>
 	}
 }

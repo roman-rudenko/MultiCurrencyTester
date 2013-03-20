@@ -1,6 +1,7 @@
 ﻿//#define _LOGGING
 
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -36,7 +37,6 @@ namespace SmartDev.MultiCurrencyTester.Connect
 		//private readonly DateTime MinMt4Date = new DateTime(1970, 1, 1, 0, 0, 0, 0);
 		//private int LastArchivedMonth = -1;
 
-		private string _balanceFileNameTemplate = "d:\\balance\\balance_{0}.csv";
 		private string _balanceFileName;
 		FileStream _balanceFile;
 		StreamWriter _balanceFileWriter;
@@ -50,6 +50,7 @@ namespace SmartDev.MultiCurrencyTester.Connect
 		private int _instancesCount = -1;
 		private InstanceStatus _instanceStatus = InstanceStatus.Unknown;
 		private int _instanceTime = -1;
+		private int _syncSeconds = 0;
 
 		public ConnectImpl()
 		{
@@ -79,18 +80,21 @@ namespace SmartDev.MultiCurrencyTester.Connect
 			{
 				_memoryMappedViewHandle = IntPtr.Zero;
 
-				if (_balanceFileWriter != null)
+				if (!string.IsNullOrEmpty(_balanceFileName))
 				{
-					_balanceFileWriter.Close();
-					_balanceFileWriter.Dispose();
-					_balanceFileWriter = null;
-				}
+					if (_balanceFileWriter != null)
+					{
+						_balanceFileWriter.Close();
+						_balanceFileWriter.Dispose();
+						_balanceFileWriter = null;
+					}
 
-				if (_balanceFile != null)
-				{
-					_balanceFile.Close();
-					_balanceFile.Dispose();
-					_balanceFile = null;
+					if (_balanceFile != null)
+					{
+						_balanceFile.Close();
+						_balanceFile.Dispose();
+						_balanceFile = null;
+					}
 				}
 
 				if (_memoryMappedViewStream != null)
@@ -128,22 +132,27 @@ namespace SmartDev.MultiCurrencyTester.Connect
 			}
 		}
 
-		public void InitializeTestAPI(int instanceId, int instancesCount)
+		public void InitializeTestAPI(int instanceId, int instancesCount, int syncSeconds, string logFilePath)
 		{
 			if (instanceId < 0) throw new ArgumentException("instanceId");
 			if (instancesCount < 1) throw new ArgumentException("instancesCount");
 			if (instanceId >= instancesCount) throw new ArgumentException("instanceId");
+			if (syncSeconds < 0) throw new ArgumentException("syncSeconds");
 
 			_instanceId = instanceId;
 			_instancesCount = instancesCount;
+			_syncSeconds = syncSeconds;
 
-			_balanceFileName = string.Format(_balanceFileNameTemplate, _instanceId);
-			if (!Directory.Exists(Path.GetDirectoryName(_balanceFileName)))
+			_balanceFileName = logFilePath;
+			if (!string.IsNullOrEmpty(_balanceFileName))
 			{
-				Directory.CreateDirectory(Path.GetDirectoryName(_balanceFileName));
+				if (!Directory.Exists(Path.GetDirectoryName(_balanceFileName)))
+				{
+					Directory.CreateDirectory(Path.GetDirectoryName(_balanceFileName));
+				}
+				_balanceFile = File.OpenWrite(_balanceFileName);
+				_balanceFileWriter = new StreamWriter(_balanceFile);
 			}
-			_balanceFile = File.OpenWrite(_balanceFileName);
-			_balanceFileWriter = new StreamWriter(_balanceFile);
 
 			bool isInitialized = false;
 
@@ -207,39 +216,14 @@ namespace SmartDev.MultiCurrencyTester.Connect
 		public void NextTick(int tick, double balance, double equity)
 		{
 			InstanceTime = tick;
-			_balanceFileWriter.WriteLine("{0};{1};{2};", tick, balance, equity);
-
-			//var tickTime = MinMt4Date.AddSeconds(tick);
-
-			//if (tickTime.Month != LastArchivedMonth)
-			//{
-			//    if (LastArchivedMonth == -1)
-			//    {
-			//        LastArchivedMonth = tickTime.Month;
-			//    }
-			//    else
-			//    {
-			//        if (_balanceFileWriter != null && _balanceFile != null)
-			//        {
-			//            _balanceFileWriter.Close();
-			//            _balanceFileWriter.Dispose();
-			//            _balanceFileWriter = null;
-			//            _balanceFile.Close();
-			//            _balanceFile.Dispose();
-			//            _balanceFile = null;
-
-			//            File.Move(_balanceFileName, string.Format(_balanceFileNameTemplate, _instanceId + "_" + tickTime.ToString("yyyy.MM")));
-			//            LastArchivedMonth = tickTime.Month;
-
-			//            _balanceFile = File.OpenWrite(_balanceFileName);
-			//            _balanceFileWriter = new StreamWriter(_balanceFile);
-			//        }
-			//    }
-			//}
+			if (!string.IsNullOrEmpty(_balanceFileName))
+			{
+				_balanceFileWriter.WriteLine("{0};{1};{2};", tick, balance, equity);
+			}
+			OnDataChanged();
 #if _LOGGING
 			Log(string.Format("conn{0}.NextTick({1});\r\n", _instanceId, tick));
 #endif
-			CleanVariables();
 		}
 
 		public double GetVariable(string variableName)
@@ -264,10 +248,8 @@ namespace SmartDev.MultiCurrencyTester.Connect
 					contract = LoadData();
 				}
 				int lastTickOfSlowestInstance = GetLastTickOfSlowestInstance(contract);
-				int lastVariableTick = GetLastVariableTick(contract, variableName);
 				bool isDeinitialized = InstanceStatus == InstanceStatus.Deinitialized;
-				shouldWait = lastVariableTick < InstanceTime
-								&& lastTickOfSlowestInstance < InstanceTime;
+				shouldWait = lastTickOfSlowestInstance < InstanceTime - _syncSeconds;
 				if (!(!isDeinitialized && shouldWait))
 				{
 					VariableOperations variableOperation;
@@ -275,27 +257,25 @@ namespace SmartDev.MultiCurrencyTester.Connect
 
 					double result = 0;
 
-					switch (variableOperation)
+					if (contract.Variables.ContainsKey(variableName))
 					{
-						case VariableOperations.Nothing:
-							result = contract.Variables
-												.Where(v => v.Name == variableName && v.Tick <= InstanceTime)
-												.Select(v => v.Value)
-												.LastOrDefault();
-							break;
-						case VariableOperations.Sum:
-							for (int i = 0; i < _instancesCount; ++i)
-							{
-								result += contract.Variables
-													.Where(v => v.Name == variableName
-																&& v.Tick <= InstanceTime
-																&& v.InstaceId == i)
-													.Select(v => v.Value)
-													.LastOrDefault();
-							}
-							break;
-						default:
-							throw new NotImplementedException();
+						var variableValues = contract.Variables[variableName];
+
+						switch (variableOperation)
+						{
+							case VariableOperations.Nothing:
+								result = variableValues
+								                 .Select(v => v.Value)
+								                 .Single();
+								break;
+							case VariableOperations.Sum:
+								result = variableValues
+												 .Select(v => v.Value)
+												 .Sum();
+								break;
+							default:
+								throw new NotImplementedException();
+						}
 					}
 #if _LOGGING
 					Log(string.Format("/*{2} */ conn{0}.GetVariable(\"{1}\"); /*{3} */\r\n", _instanceId, variableName,
@@ -308,49 +288,63 @@ namespace SmartDev.MultiCurrencyTester.Connect
 			return 0;
 		}
 
-		public double GetVariableForTick(string variableName, int tick)
-		{
-			using (GetLock())
-			{
-				var contract = LoadData();
-				return contract.Variables
-							   .Where(v => v.Name == variableName && v.Tick == tick)
-							   .Select(v => v.Value)
-							   .LastOrDefault();
-			}
-		}
-
 		public void SetVariable(string variableName, double variableValue)
 		{
-			using (GetLock())
+			bool shouldWait = true;
+			while (shouldWait)
 			{
+				using (GetLock())
+				{
 #if _LOGGING
 				Log(string.Format("conn{0}.SetVariable(\"{1}\", {2});\r\n", _instanceId, variableName, variableValue));
 #endif
-				var contract = LoadData();
-				var lastVariableForThisInstanceQuery = contract.Variables.Where(v => v.Tick == InstanceTime
-																				&& v.InstaceId == _instanceId
-																				&& v.Name == variableName);
-				if (lastVariableForThisInstanceQuery.Any())
-				{
-					var lastVariableForThisInstance = lastVariableForThisInstanceQuery.Single();
-					if (lastVariableForThisInstance.Value == variableValue) return;
-					lastVariableForThisInstance.Value = variableValue;
-				}
-				else
-				{
-					contract.Variables.Add(new VariableConract
+					var contract = LoadData();
+
+					int lastTickOfSlowestInstance = GetLastTickOfSlowestInstance(contract);
+					bool isDeinitialized = InstanceStatus == InstanceStatus.Deinitialized;
+					shouldWait = lastTickOfSlowestInstance < InstanceTime - _syncSeconds;
+					if (!(!isDeinitialized && shouldWait))
 					{
-						InstaceId = _instanceId,
-						Tick = InstanceTime,
-						Name = variableName,
-						Value = variableValue
-					});
+
+						VariableOperations variableOperation;
+						contract.VariableOperations.TryGetValue(variableName, out variableOperation);
+						List<VariableConract> variableValues;
+						if (contract.Variables.ContainsKey(variableName))
+						{
+							variableValues = contract.Variables[variableName];
+						}
+						else
+						{
+							variableValues = new List<VariableConract> {new VariableConract {InstaceId = _instanceId}};
+							contract.Variables[variableName] = variableValues;
+						}
+
+						switch (variableOperation)
+						{
+							case VariableOperations.Nothing:
+								variableValues.Single().Value = variableValue;
+								break;
+							case VariableOperations.Sum:
+								var varQuery = variableValues.Where(v => v.InstaceId == _instanceId);
+								if (varQuery.Any())
+								{
+									varQuery.Single().Value = variableValue;
+								}
+								else
+								{
+									variableValues.Add(new VariableConract {InstaceId = _instanceId, Value = variableValue});
+								}
+								break;
+							default:
+								throw new NotImplementedException();
+						}
+
+						SaveData(contract);
+						OnDataChanged();
+						return;
+					}
 				}
-				//CleanVariables(contract);
-				SaveData(contract);
-				//VariablesTicks = contract.Variables.Count;
-				OnDataChanged();
+				WaitDataChanges();
 			}
 		}
 
@@ -405,12 +399,6 @@ namespace SmartDev.MultiCurrencyTester.Connect
 
 		public bool IsInstanceWaiting { get; private set; }
 
-		//private int VariablesTicks
-		//{
-		//    get { return ReadInt32(VariablesTicksOffset); }
-		//    set { Write(VariablesTicksOffset, value); }
-		//}
-
 		private class Lock : IDisposable
 		{
 			private readonly Mutex _onWriteLockMutex;
@@ -443,28 +431,6 @@ namespace SmartDev.MultiCurrencyTester.Connect
 			_onDataUpdatedEvent.Reset();
 			_onDataUpdatedEvent.WaitOne(1000);
 			IsInstanceWaiting = false;
-		}
-
-		private void CleanVariables(/*MemoryContract contract*/)
-		{
-			//if (VariablesTicks > 50)
-			{
-				using (GetLock())
-				{
-					var contract = LoadData();
-					int lastTickOfSlowestInstance = GetLastTickOfSlowestInstance(contract);
-					foreach (var variableName in contract.Variables.Select(v => v.Name).Distinct().ToArray())
-					{
-						int lastVariableTickOfSlowestInstance = GetLastVariableTickOfSlowestInstance(contract, variableName);
-						contract.Variables.RemoveAll(v => v.Name == variableName
-														  && v.Tick < lastTickOfSlowestInstance
-														  && v.Tick < lastVariableTickOfSlowestInstance);
-					}
-					SaveData(contract);
-					//VariablesTicks = contract.Variables.Count;
-					OnDataChanged();
-				}
-			}
 		}
 
 		private int ReadInt32(int offset)
@@ -529,13 +495,18 @@ namespace SmartDev.MultiCurrencyTester.Connect
 			int variablesCount = ReadInt32(ref offset);
 			for (int i = 0; i < variablesCount; i++)
 			{
-				contract.Variables.Add(new VariableConract
-					{
-						InstaceId = ReadInt32(ref offset),
-						Tick = ReadInt32(ref offset),
-						Name = ReadString(ref offset),
-						Value = ReadDouble(ref offset)
-					});
+				var list = new List<VariableConract>();
+				contract.Variables[ReadString(ref offset)] = list;
+
+				int variableContractsCount = ReadInt32(ref offset);
+				for (int j = 0; j < variableContractsCount; j++)
+				{
+					list.Add(new VariableConract
+						{
+							InstaceId = ReadInt32(ref offset),
+							Value = ReadDouble(ref offset)
+						});
+				}
 			}
 
 			int variableOperationsCount = ReadInt32(ref offset);
@@ -554,10 +525,13 @@ namespace SmartDev.MultiCurrencyTester.Connect
 			Write(ref offset, contract.Variables.Count);
 			foreach (var variable in contract.Variables)
 			{
-				Write(ref offset, variable.InstaceId);
-				Write(ref offset, variable.Tick);
-				Write(ref offset, variable.Name);
-				Write(ref offset, variable.Value);
+				Write(ref offset, variable.Key);
+				Write(ref offset, variable.Value.Count);
+				foreach (var variableContract in variable.Value)
+				{
+					Write(ref offset, variableContract.InstaceId);
+					Write(ref offset, variableContract.Value);
+				}
 			}
 
 			Write(ref offset, contract.VariableOperations.Count);
@@ -586,36 +560,6 @@ namespace SmartDev.MultiCurrencyTester.Connect
 				result = Math.Min(result, tick);
 			}
 			return result;
-		}
-
-		private int GetLastVariableTickOfSlowestInstance(MemoryContract contract, string variableName)
-		{
-			if (_instancesCount == 0) return 0;
-			int result = int.MaxValue;
-			for (int i = 0; i < _instancesCount; ++i)
-			{
-				int tick = GetLastVariableTickOfInstance(contract, variableName, i);
-				result = Math.Min(result, tick);
-			}
-			return result;
-		}
-
-		private int GetLastVariableTickOfInstance(MemoryContract contract, string variableName, int instanceId)
-		{
-			var variableQueryOfInstance = contract.Variables.Where(v => v.Name == variableName
-																		&& v.Tick <= InstanceTime
-			                                                            && v.InstaceId == instanceId);
-			if (!variableQueryOfInstance.Any()) return 0;
-			int lastVariableTick = variableQueryOfInstance.Max(v => v.Tick);
-			return lastVariableTick;
-		}
-
-		private int GetLastVariableTick(MemoryContract contract, string variableName)
-		{
-			var variableQuery = contract.Variables.Where(v => v.Name == variableName && v.Tick <= InstanceTime);
-			if (!variableQuery.Any()) return 0;
-			int lastVariableTick = variableQuery.Max(v => v.Tick);
-			return lastVariableTick;
 		}
 
 #if _LOGGING

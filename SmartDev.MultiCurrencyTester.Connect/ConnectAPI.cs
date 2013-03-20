@@ -10,14 +10,14 @@ namespace SmartDev.MultiCurrencyTester.Connect
 		private static ConnectImpl _impl;
 
 		[DllExport("InitializeTestAPI", CallingConvention = CallingConvention.Cdecl)]
-		public static void InitializeTestAPI(int instanceId, int instancesCount)
+		public static void InitializeTestAPI(int instanceId, int instancesCount, int syncSeconds, string logFilePath)
 		{
 			try
 			{
 				if (_impl == null)
 				{
 					_impl = new ConnectImpl();
-					_impl.InitializeTestAPI(instanceId, instancesCount);
+					_impl.InitializeTestAPI(instanceId, instancesCount, syncSeconds, logFilePath);
 				}
 			}
 			catch (Exception ex)
